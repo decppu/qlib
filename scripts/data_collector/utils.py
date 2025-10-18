@@ -300,20 +300,34 @@ def get_us_stock_symbols(qlib_data_path: [str, Path] = None) -> list:
     global _US_SYMBOLS  # pylint: disable=W0603
 
     @deco_retry
-    def _get_eastmoney():
-        url = "http://4.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=10000&fs=m:105,m:106,m:107&fields=f12"
-        resp = requests.get(url, timeout=None)
-        if resp.status_code != 200:
-            raise ValueError("request error")
+    def _get_eastmoney(read_file: bool = False):
+        pn = 1
+        _symbols = []
+        if read_file:
+            with open("eastmoney_symbols.txt", "r") as f:
+                for line in f:
+                    _symbols.append(line.strip())
+            return _symbols
 
-        try:
-            _symbols = [_v["f12"].replace("_", "-P") for _v in resp.json()["data"]["diff"].values()]
-        except Exception as e:
-            logger.warning(f"request error: {e}")
-            raise
+        while True:
+            url = f"http://4.push2delay.eastmoney.com/api/qt/clist/get?pn={pn}&pz=100&fs=m:105,m:106,m:107&fields=f12"
+            if pn % 5 == 0:
+                print(f"fetching page {pn}...")
+            resp = requests.get(url, timeout=None)
+            if resp.status_code != 200:
+                raise ValueError("request error")
+            if not resp.json()["data"]:
+                break
+
+            try:
+                _symbols.extend([_v["f12"].replace("_", "-P") for _v in resp.json()["data"]["diff"].values()])
+            except Exception as e:
+                logger.warning(f"request error: {e}")
+                raise
+            pn += 1
 
         if len(_symbols) < 8000:
-            raise ValueError("request error")
+            raise ValueError("request error: symbols num < 8000")
 
         return _symbols
 
@@ -349,14 +363,14 @@ def get_us_stock_symbols(qlib_data_path: [str, Path] = None) -> list:
             raise ValueError("request error")
 
         try:
-            _symbols = [_v["symbolTicker"].replace("-", "-P") for _v in resp.json()]
+            _symbols = [_v["symbolExchangeTicker"].replace("-", "-P") for _v in resp.json()]
         except Exception as e:
             logger.warning(f"request error: {e}")
             _symbols = []
         return _symbols
 
     if _US_SYMBOLS is None:
-        _all_symbols = _get_eastmoney() + _get_nasdaq() + _get_nyse()
+        _all_symbols = _get_eastmoney(read_file=True) + _get_nasdaq() + _get_nyse()
         if qlib_data_path is not None:
             for _index in ["nasdaq100", "sp500"]:
                 ins_df = pd.read_csv(
